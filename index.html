@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>División de Gastos por Familias</title>
+<style>
+body {
+    font-family: Arial, sans-serif;
+    max-width: 900px;
+    margin: auto;
+    padding: 20px;
+}
+h2 { margin-top: 30px; }
+input, select, button {
+    padding: 6px;
+    margin: 5px;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+th, td {
+    border: 1px solid #ccc;
+    padding: 8px;
+    text-align: center;
+}
+.resultado {
+    background: #f5f5f5;
+    padding: 15px;
+    margin-top: 20px;
+}
+button {
+    cursor: pointer;
+}
+</style>
+</head>
+<body>
+
+<h1>División de Gastos por Familias</h1>
+
+<h2>1️⃣ Familias </h2>
+Nombre:
+<input type="text" id="familiaNombre">
+Integrantes:
+<input type="number" id="familiaCuotas" min="1">
+<br>
+<button onclick="agregarFamilia()">Agregar familia</button>
+
+<br><br>
+Familia a borrar:
+<select id="familiaABorrar"></select>
+<button onclick="borrarFamilia()">Borrar familia</button>
+
+<button onclick="borrarFamiliasGuardadas()">Borrar todas</button>
+
+<table id="tablaFamilias">
+<tr><th>Familia</th><th>Integrantes</th></tr>
+</table>
+
+<h2>2️⃣ Cargar gasto</h2>
+Pagó:
+<select id="familiaPago"></select>
+Monto:
+<input type="number" id="montoGasto" min="1">
+<button onclick="agregarGasto()">Agregar gasto</button>
+
+<table id="tablaGastos">
+<tr><th>Familia que pagó</th><th>Monto</th></tr>
+</table>
+
+<br>
+<button onclick="calcular()">Calcular división</button>
+<button onclick="exportarPDF()">Exportar a PDF</button>
+
+<div class="resultado" id="resultado"></div>
+
+<!-- jsPDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<script>
+let familias = [];
+let gastos = [];
+let liquidacion = [];
+
+/* ---------- PERSISTENCIA ---------- */
+function guardarFamilias() {
+    localStorage.setItem("familiasGuardadas", JSON.stringify(familias));
+}
+
+function cargarFamilias() {
+    const data = localStorage.getItem("familiasGuardadas");
+    if (data) {
+        familias = JSON.parse(data);
+        actualizarFamilias();
+    }
+}
+
+function borrarFamiliasGuardadas() {
+    if (confirm("¿Seguro que querés borrar TODAS las familias?")) {
+        localStorage.removeItem("familiasGuardadas");
+        familias = [];
+        actualizarFamilias();
+    }
+}
+
+/* ---------- FAMILIAS ---------- */
+function agregarFamilia() {
+    const nombre = familiaNombre.value.trim();
+    const cuotas = Number(familiaCuotas.value);
+    if (!nombre || cuotas <= 0) return;
+
+    familias.push({ nombre, cuotas, pago: 0, balance: 0 });
+    guardarFamilias();
+    actualizarFamilias();
+
+    familiaNombre.value = "";
+    familiaCuotas.value = "";
+}
+
+function borrarFamilia() {
+    const nombre = familiaABorrar.value;
+    if (!nombre) return;
+
+    if (!confirm(`¿Borrar la familia "${nombre}"?`)) return;
+
+    familias = familias.filter(f => f.nombre !== nombre);
+    guardarFamilias();
+    actualizarFamilias();
+}
+
+function actualizarFamilias() {
+    tablaFamilias.innerHTML = `<tr><th>Familia</th><th>Integrantes</th></tr>`;
+    familiaPago.innerHTML = "";
+    familiaABorrar.innerHTML = "";
+
+    familias.forEach(f => {
+        tablaFamilias.innerHTML += `<tr><td>${f.nombre}</td><td>${f.cuotas}</td></tr>`;
+        familiaPago.innerHTML += `<option>${f.nombre}</option>`;
+        familiaABorrar.innerHTML += `<option>${f.nombre}</option>`;
+    });
+}
+
+/* ---------- GASTOS ---------- */
+function agregarGasto() {
+    const familia = familiaPago.value;
+    const monto = Number(montoGasto.value);
+    if (!familia || monto <= 0) return;
+
+    gastos.push({ familia, monto });
+    tablaGastos.innerHTML += `<tr><td>${familia}</td><td>$${monto}</td></tr>`;
+    montoGasto.value = "";
+}
+
+/* ---------- CALCULO ---------- */
+function calcular() {
+    liquidacion = [];
+    familias.forEach(f => f.pago = 0);
+
+    gastos.forEach(g => {
+        const f = familias.find(x => x.nombre === g.familia);
+        if (f) f.pago += g.monto;
+    });
+
+    const total = gastos.reduce((s, g) => s + g.monto, 0);
+    const cuotasTotales = familias.reduce((s, f) => s + f.cuotas, 0);
+    const valorCuota = total / cuotasTotales;
+
+    familias.forEach(f => {
+        f.balance = +(f.pago - f.cuotas * valorCuota).toFixed(2);
+    });
+
+    mostrarResultados(total, valorCuota);
+    calcularLiquidacion();
+}
+
+function mostrarResultados(total, valorCuota) {
+    let html = `<h3>Resumen</h3>
+    <p><strong>Total gastado:</strong> $${total.toFixed(2)}</p>
+    <p><strong>Valor por integrante:</strong> $${valorCuota.toFixed(2)}</p>
+    <ul>`;
+
+    familias.forEach(f => {
+        if (f.balance > 0)
+            html += `<li>${f.nombre} cobra $${f.balance.toFixed(2)}</li>`;
+        else if (f.balance < 0)
+            html += `<li>${f.nombre} debe $${(-f.balance).toFixed(2)}</li>`;
+        else
+            html += `<li>${f.nombre} está en equilibrio</li>`;
+    });
+
+    html += `</ul>`;
+    resultado.innerHTML = html;
+}
+
+/* ---------- LIQUIDACION ---------- */
+function calcularLiquidacion() {
+    let deudores = familias.filter(f => f.balance < 0).map(f => ({ ...f }));
+    let acreedores = familias.filter(f => f.balance > 0).map(f => ({ ...f }));
+
+    let html = `<h3>Quién paga a quién</h3><ul>`;
+
+    deudores.forEach(d => {
+        let deuda = -d.balance;
+
+        acreedores.forEach(a => {
+            if (deuda > 0 && a.balance > 0) {
+                let pago = Math.min(deuda, a.balance);
+                deuda -= pago;
+                a.balance -= pago;
+
+                liquidacion.push({
+                    deudor: d.nombre,
+                    acreedor: a.nombre,
+                    monto: pago
+                });
+
+                html += `<li>${d.nombre} paga $${pago.toFixed(2)} a ${a.nombre}</li>`;
+            }
+        });
+    });
+
+    html += `</ul>`;
+    resultado.innerHTML += html;
+}
+
+/* ---------- PDF ---------- */
+function exportarPDF() {
+    if (familias.length === 0) return;
+
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF();
+    let y = 10;
+
+    pdf.setFontSize(14);
+    pdf.text("División de Gastos por Familias", 10, y);
+    y += 10;
+
+    pdf.setFontSize(11);
+    pdf.text(`Fecha: ${new Date().toLocaleDateString()}`, 10, y);
+    y += 10;
+
+    pdf.text("Resumen:", 10, y);
+    y += 8;
+
+    familias.forEach(f => {
+        let linea =
+            f.balance > 0 ? `${f.nombre} cobra $${f.balance.toFixed(2)}` :
+            f.balance < 0 ? `${f.nombre} debe $${(-f.balance).toFixed(2)}` :
+            `${f.nombre} está en equilibrio`;
+
+        pdf.text(linea, 10, y);
+        y += 7;
+    });
+
+    y += 5;
+    pdf.text("Liquidación final:", 10, y);
+    y += 8;
+
+    liquidacion.forEach(l => {
+        pdf.text(`${l.deudor} paga $${l.monto.toFixed(2)} a ${l.acreedor}`, 10, y);
+        y += 7;
+        if (y > 280) {
+            pdf.addPage();
+            y = 10;
+        }
+    });
+
+    pdf.save("division_gastos_familias.pdf");
+}
+
+/* ---------- INICIO ---------- */
+window.onload = cargarFamilias;
+</script>
+
+</body>
+</html>
